@@ -7,8 +7,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 120
+    runs-on: macos-13
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -17,6 +17,12 @@ jobs:
       - name: Clone Telegram-iOS
         run: |
           git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          ls -la telegram-src/
+
+      - name: Set Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -24,36 +30,34 @@ jobs:
           python-version: '3.11'
 
       - name: Create config
+        working-directory: telegram-src
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
         run: |
-          cd telegram-src
-          BUNDLE_ID="${{ secrets.BUNDLE_ID }}"
-          if [ -z "$BUNDLE_ID" ]; then BUNDLE_ID="org.telegram.build"; fi
-          API_ID="${{ secrets.API_ID }}"
-          if [ -z "$API_ID" ]; then API_ID="0"; fi
-          API_HASH="${{ secrets.API_HASH }}"
-          if [ -z "$API_HASH" ]; then API_HASH="placeholder"; fi
-          TEAM_ID="${{ secrets.TEAM_ID }}"
-          
-          cat > build-config.json << CONFIG
-          {
-            "bundle_id": "$BUNDLE_ID",
-            "api_id": "$API_ID",
-            "api_hash": "$API_HASH",
-            "team_id": "$TEAM_ID",
-            "app_center_id": "0",
-            "is_internal_build": "true",
-            "is_appstore_build": "false",
-            "appstore_id": "0",
-            "app_specific_url_scheme": "tg",
-            "premium_iap_product_id": "",
-            "enable_siri": false,
-            "enable_icloud": false
+          python3 -c "
+          import json, os
+          c = {
+            'bundle_id': 'org.telegram.build',
+            'api_id': os.environ.get('API_ID', '0'),
+            'api_hash': os.environ.get('API_HASH', 'placeholder'),
+            'team_id': '',
+            'app_center_id': '0',
+            'is_internal_build': 'true',
+            'is_appstore_build': 'false',
+            'appstore_id': '0',
+            'app_specific_url_scheme': 'tg',
+            'premium_iap_product_id': '',
+            'enable_siri': False,
+            'enable_icloud': False
           }
-          CONFIG
+          with open('build-config.json','w') as f: json.dump(c,f,indent=2)
+          "
+          cat build-config.json
 
       - name: Generate Xcode project
+        working-directory: telegram-src
         run: |
-          cd telegram-src
           python3 build-system/Make/Make.py \
             --overrideXcodeVersion \
             --cacheDir="$HOME/telegram-bazel-cache" \
@@ -61,9 +65,9 @@ jobs:
             --configurationPath=build-config.json \
             --disableProvisioningProfiles
 
-      - name: Build (simulateur - .app)
+      - name: Build (simulateur)
+        working-directory: telegram-src
         run: |
-          cd telegram-src
           python3 build-system/Make/Make.py \
             --overrideXcodeVersion \
             --cacheDir="$HOME/telegram-bazel-cache" \
