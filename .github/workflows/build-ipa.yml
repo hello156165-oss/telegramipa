@@ -52,7 +52,7 @@ jobs:
             'bundle_id': 'org.telegram.build',
             'api_id': os.environ.get('API_ID', '0'),
             'api_hash': os.environ.get('API_HASH', 'placeholder'),
-            'team_id': os.environ.get('TEAM_ID', 'C67CF9S4VU'),
+            'team_id': (os.environ.get('TEAM_ID') or 'C67CF9S4VU').strip() or 'C67CF9S4VU',
             'app_center_id': '0',
             'is_internal_build': 'true',
             'is_appstore_build': 'false',
@@ -64,7 +64,10 @@ jobs:
           }
           with open('build-config.json','w') as f: json.dump(c,f,indent=2)
           "
+          echo "=== build-config.json ==="
           cat build-config.json
+          echo "=== team_id check ==="
+          python3 -c "import json; d=json.load(open('build-config.json')); print('team_id:', repr(d.get('team_id'))); assert d.get('team_id'), 'team_id must be non-empty'"
 
       - name: Generate Xcode project
         working-directory: telegram-src
