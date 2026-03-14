@@ -80,8 +80,117 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Telegram-build
+          name: Telegram-simulator
           path: |
             telegram-src/bazel-bin/Telegram/Telegram.app
+            telegram-src/bazel-bin/Telegram/Telegram.ipa
+          if-no-files-found: warn
+
+  build-device:
+    runs-on: macos-14
+    timeout-minutes: 120
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Clone Telegram-iOS
+        run: |
+          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          cd telegram-src
+          git -c submodule.recurse=false checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
+          cd ..
+
+      - name: Fix patch line endings
+        run: tr -d '\r' < larp.patch > larp.patch.lf && mv larp.patch.lf larp.patch
+
+      - name: Apply LARP patch
+        run: |
+          cd telegram-src
+          git apply -p0 --verbose ../larp.patch
+
+      - name: Setup Apple signing (compte gratuit = 7j)
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$BUILD_CERTIFICATE_BASE64" ] || [ -z "$BUILD_PROVISION_PROFILE_BASE64" ]; then
+            echo "::error::Pour build device: ajoute BUILD_CERTIFICATE_BASE64, P12_PASSWORD, BUILD_PROVISION_PROFILE_BASE64, KEYCHAIN_PASSWORD dans Settings > Secrets"
+            exit 1
+          fi
+          CERT_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERT_PATH
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+          security set-keychain-settings -lut 21600 $RUNNER_TEMP/app-signing.keychain-db
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+          security import $CERT_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $RUNNER_TEMP/app-signing.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $RUNNER_TEMP/app-signing.keychain-db
+          security list-keychain -d user -s $RUNNER_TEMP/app-signing.keychain-db
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
+          mkdir -p telegram-src/build-input/codesigning/profiles
+          cp $PP_PATH telegram-src/build-input/codesigning/profiles/Telegram.mobileprovision
+          mkdir -p telegram-src/build-input/codesigning/certs
+          cp $CERT_PATH telegram-src/build-input/codesigning/certs/
+
+      - name: Set Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Create config (device)
+        working-directory: telegram-src
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+        run: |
+          python3 -c "
+          import json, os
+          tid = (os.environ.get('TEAM_ID') or '').strip()
+          if not tid:
+            print('::error::Ajoute TEAM_ID (ton Team ID Apple) dans Secrets')
+            exit(1)
+          c = {
+            'bundle_id': (os.environ.get('BUNDLE_ID') or 'org.telegram.build').strip(),
+            'api_id': os.environ.get('API_ID', '0'),
+            'api_hash': os.environ.get('API_HASH', 'placeholder'),
+            'team_id': tid,
+            'app_center_id': '0',
+            'is_internal_build': 'true',
+            'is_appstore_build': 'false',
+            'appstore_id': '0',
+            'app_specific_url_scheme': 'tg',
+            'premium_iap_product_id': '',
+            'enable_siri': False,
+            'enable_icloud': False
+          }
+          with open('build-config.json','w') as f: json.dump(c,f,indent=2)
+          "
+          cat build-config.json
+
+      - name: Generate Xcode project (device)
+        working-directory: telegram-src
+        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" generateProject --configurationPath=build-config.json --codesigningInformationPath=build-input/codesigning --disableProvisioningProfiles --disableExtensions
+
+      - name: Build (iPhone)
+        working-directory: telegram-src
+        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" build --configurationPath=build-config.json --codesigningInformationPath=build-input/codesigning --disableProvisioningProfiles --buildNumber=100001 --configuration=release_arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-device
+          path: |
             telegram-src/bazel-bin/Telegram/Telegram.ipa
           if-no-files-found: warn
