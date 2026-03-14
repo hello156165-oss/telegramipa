@@ -39,53 +39,7 @@ jobs:
 
       - name: Apply Make.py fix (bazelArguments)
         working-directory: telegram-src
-        run: |
-          python3 -c "
-          p = 'build-system/Make/Make.py'
-          with open(p) as f: c = f.read()
-          if 'if self.additional_args is not None:' in c:
-              print('Make.py already patched')
-              exit(0)
-          c = c.replace(
-              \"\"\"        return combined_arguments
-
-    def get_additional_build_arguments(self):
-        combined_arguments = []
-        if self.split_submodules:
-            combined_arguments += [
-                # https://github.com/bazelbuild/rules_swift
-                # If enabled and whole module optimisation is being used, the `*.swiftdoc`,
-                # `*.swiftmodule` and `*-Swift.h` are generated with a separate action
-                # rather than as part of the compilation.
-                '--features=swift.split_derived_files_generation',
-            ]
-
-        return combined_arguments\"\"\",
-              \"\"\"        return combined_arguments
-
-    def get_additional_build_arguments(self):
-        combined_arguments = []
-        if self.split_submodules:
-            combined_arguments += [
-                # https://github.com/bazelbuild/rules_swift
-                # If enabled and whole module optimisation is being used, the `*.swiftdoc`,
-                # `*.swiftmodule` and `*-Swift.h` are generated with a separate action
-                # rather than as part of the compilation.
-                '--features=swift.split_derived_files_generation',
-            ]
-
-        if self.additional_args is not None:
-            combined_arguments += self.additional_args
-
-        return combined_arguments\"\"\"
-          )
-          c = c.replace(
-              '    bazel_command_line.set_split_swiftmodules(arguments.enableParallelSwiftmoduleGeneration)\n\n    bazel_command_line.invoke_build()',
-              '    bazel_command_line.set_split_swiftmodules(arguments.enableParallelSwiftmoduleGeneration)\n\n    if arguments.bazelArguments is not None:\n        bazel_command_line.add_additional_args(shlex.split(arguments.bazelArguments))\n\n    bazel_command_line.invoke_build()'
-          )
-          with open(p, 'w') as f: f.write(c)
-          print('Make.py patched OK')
-          "
+        run: python3 ../patch-make.py
 
       - name: Set Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -177,53 +131,7 @@ jobs:
 
       - name: Apply Make.py fix (bazelArguments)
         working-directory: telegram-src
-        run: |
-          python3 -c "
-          p = 'build-system/Make/Make.py'
-          with open(p) as f: c = f.read()
-          if 'if self.additional_args is not None:' in c:
-              print('Make.py already patched')
-              exit(0)
-          c = c.replace(
-              \"\"\"        return combined_arguments
-
-    def get_additional_build_arguments(self):
-        combined_arguments = []
-        if self.split_submodules:
-            combined_arguments += [
-                # https://github.com/bazelbuild/rules_swift
-                # If enabled and whole module optimisation is being used, the `*.swiftdoc`,
-                # `*.swiftmodule` and `*-Swift.h` are generated with a separate action
-                # rather than as part of the compilation.
-                '--features=swift.split_derived_files_generation',
-            ]
-
-        return combined_arguments\"\"\",
-              \"\"\"        return combined_arguments
-
-    def get_additional_build_arguments(self):
-        combined_arguments = []
-        if self.split_submodules:
-            combined_arguments += [
-                # https://github.com/bazelbuild/rules_swift
-                # If enabled and whole module optimisation is being used, the `*.swiftdoc`,
-                # `*.swiftmodule` and `*-Swift.h` are generated with a separate action
-                # rather than as part of the compilation.
-                '--features=swift.split_derived_files_generation',
-            ]
-
-        if self.additional_args is not None:
-            combined_arguments += self.additional_args
-
-        return combined_arguments\"\"\"
-          )
-          c = c.replace(
-              '    bazel_command_line.set_split_swiftmodules(arguments.enableParallelSwiftmoduleGeneration)\n\n    bazel_command_line.invoke_build()',
-              '    bazel_command_line.set_split_swiftmodules(arguments.enableParallelSwiftmoduleGeneration)\n\n    if arguments.bazelArguments is not None:\n        bazel_command_line.add_additional_args(shlex.split(arguments.bazelArguments))\n\n    bazel_command_line.invoke_build()'
-          )
-          with open(p, 'w') as f: f.write(c)
-          print('Make.py patched OK')
-          "
+        run: python3 ../patch-make.py
 
       - name: Setup Apple signing (compte gratuit = 7j)
         env:
