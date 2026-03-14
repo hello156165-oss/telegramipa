@@ -1,0 +1,83 @@
+name: Build Telegram IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone Telegram-iOS
+        run: |
+          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create config
+        run: |
+          cd telegram-src
+          BUNDLE_ID="${{ secrets.BUNDLE_ID }}"
+          if [ -z "$BUNDLE_ID" ]; then BUNDLE_ID="org.telegram.build"; fi
+          API_ID="${{ secrets.API_ID }}"
+          if [ -z "$API_ID" ]; then API_ID="0"; fi
+          API_HASH="${{ secrets.API_HASH }}"
+          if [ -z "$API_HASH" ]; then API_HASH="placeholder"; fi
+          TEAM_ID="${{ secrets.TEAM_ID }}"
+          
+          cat > build-config.json << CONFIG
+          {
+            "bundle_id": "$BUNDLE_ID",
+            "api_id": "$API_ID",
+            "api_hash": "$API_HASH",
+            "team_id": "$TEAM_ID",
+            "app_center_id": "0",
+            "is_internal_build": "true",
+            "is_appstore_build": "false",
+            "appstore_id": "0",
+            "app_specific_url_scheme": "tg",
+            "premium_iap_product_id": "",
+            "enable_siri": false,
+            "enable_icloud": false
+          }
+          CONFIG
+
+      - name: Generate Xcode project
+        run: |
+          cd telegram-src
+          python3 build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            --cacheDir="$HOME/telegram-bazel-cache" \
+            generateProject \
+            --configurationPath=build-config.json \
+            --disableProvisioningProfiles
+
+      - name: Build (simulateur - .app)
+        run: |
+          cd telegram-src
+          python3 build-system/Make/Make.py \
+            --overrideXcodeVersion \
+            --cacheDir="$HOME/telegram-bazel-cache" \
+            build \
+            --configurationPath=build-config.json \
+            --disableProvisioningProfiles \
+            --buildNumber=100001 \
+            --configuration=release_sim_arm64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-build
+          path: |
+            telegram-src/bazel-bin/Telegram/Telegram.app
+            telegram-src/bazel-bin/Telegram/Telegram.ipa
+          if-no-files-found: warn
