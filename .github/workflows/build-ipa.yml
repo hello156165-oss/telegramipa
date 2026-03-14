@@ -83,7 +83,7 @@ jobs:
 
       - name: Build (simulateur)
         working-directory: telegram-src
-        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" build --configurationPath=build-config.json --xcodeManagedCodesigning --disableProvisioningProfiles --buildNumber=100001 --configuration=release_sim_arm64
+        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" build --configurationPath=build-config.json --xcodeManagedCodesigning --buildNumber=100001 --configuration=release_sim_arm64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -197,7 +197,7 @@ jobs:
 
       - name: Build (iPhone)
         working-directory: telegram-src
-        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" build --configurationPath=build-config.json --xcodeManagedCodesigning --disableProvisioningProfiles --buildNumber=100001 --configuration=release_arm64
+        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" build --configurationPath=build-config.json --xcodeManagedCodesigning --buildNumber=100001 --configuration=release_arm64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
