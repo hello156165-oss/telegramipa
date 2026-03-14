@@ -18,16 +18,14 @@ jobs:
 
       - name: Clone Telegram-iOS
         run: |
-          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          git clone -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
           cd telegram-src
-          # Pin to commit compatible with LARP patch (base: f7745435)
           git checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
-          git submodule update --init --recursive
+          git submodule update --init --recursive -j8
           cd ..
 
       - name: Fix patch line endings
-        run: |
-          tr -d '\r' < larp.patch > larp.patch.lf && mv larp.patch.lf larp.patch
+        run: tr -d '\r' < larp.patch > larp.patch.lf && mv larp.patch.lf larp.patch
 
       - name: Apply LARP patch
         run: |
