@@ -17,6 +17,7 @@ import WebUI
 import AvatarNode
 import PeerNameColorItem
 import BoostLevelIconComponent
+import TelegramUIPreferences
 
 private let enabledPublicBioEntities: EnabledEntityTypes = [.allUrl, .mention, .hashtag]
 private let enabledPrivateBioEntities: EnabledEntityTypes = [.internalUrl, .mention, .hashtag]
@@ -122,7 +123,14 @@ func infoItems(data: PeerInfoScreenData?, context: AccountContext, presentationD
             }))
         }
         
-        if let phone = user.phone {
+        // LARP: custom phone (when viewing self, no spoof)
+        var displayPhone: String? = user.phone
+        if isMyProfile && !LarpConfig.shared.hasSpoofTarget && LarpConfig.shared.hasCustomPhone {
+            displayPhone = LarpConfig.shared.customPhone
+        } else if !isMyProfile, let ov = LarpConfig.shared.peerOverride(UInt64(bitPattern: user.id.toInt64())), !ov.customPhone.isEmpty {
+            displayPhone = ov.customPhone
+        }
+        if let phone = displayPhone {
             let formattedPhone = formatPhoneNumber(context: context, number: phone)
             let label: String
             if formattedPhone.hasPrefix("+888 ") {
@@ -138,11 +146,29 @@ func infoItems(data: PeerInfoScreenData?, context: AccountContext, presentationD
                 interaction.requestLayout(animated)
             }))
         }
-        if let mainUsername = user.addressName {
-            var additionalUsernames: String?
-            let usernames = user.usernames.filter { $0.isActive && $0.username != mainUsername }
-            if !usernames.isEmpty {
-                additionalUsernames = presentationData.strings.Profile_AdditionalUsernames(String(usernames.map { "@\($0.username)" }.joined(separator: ", "))).string
+        // LARP: custom username / aliases (when viewing self, no spoof)
+        var mainUsername: String? = user.addressName
+        var additionalUsernamesFromAliases: String?
+        if isMyProfile && !LarpConfig.shared.hasSpoofTarget {
+            if LarpConfig.shared.hasAliases, let first = LarpConfig.shared.aliases.first {
+                mainUsername = first.name.hasPrefix("@") ? String(first.name.dropFirst()) : first.name
+                let rest = LarpConfig.shared.aliases.dropFirst().map { "@\($0.name)" }.joined(separator: ", ")
+                if !rest.isEmpty {
+                    additionalUsernamesFromAliases = presentationData.strings.Profile_AdditionalUsernames(rest).string
+                }
+            } else if LarpConfig.shared.hasCustomUsername {
+                mainUsername = LarpConfig.shared.customUsername.hasPrefix("@") ? String(LarpConfig.shared.customUsername.dropFirst()) : LarpConfig.shared.customUsername
+            }
+        } else if !isMyProfile, let ov = LarpConfig.shared.peerOverride(UInt64(bitPattern: user.id.toInt64())), !ov.customUsername.isEmpty {
+            mainUsername = ov.customUsername.hasPrefix("@") ? String(ov.customUsername.dropFirst()) : ov.customUsername
+        }
+        if let mainUsername = mainUsername {
+            var additionalUsernames: String? = additionalUsernamesFromAliases
+            if additionalUsernames == nil {
+                let usernames = user.usernames.filter { $0.isActive && $0.username != mainUsername }
+                if !usernames.isEmpty {
+                    additionalUsernames = presentationData.strings.Profile_AdditionalUsernames(String(usernames.map { "@\($0.username)" }.joined(separator: ", "))).string
+                }
             }
             
             items[currentPeerInfoSection]!.append(

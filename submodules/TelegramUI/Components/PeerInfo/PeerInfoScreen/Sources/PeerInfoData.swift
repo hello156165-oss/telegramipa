@@ -928,8 +928,20 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id, 
     
     let profileGiftsContext = ProfileGiftsContext(account: context.account, peerId: peerId)
     
+    // LARP: when spoofing, also load spoof target so it appears in peerView
+    let spoofPeerSignal: Signal<Peer?, NoError>
+    if peerId == context.account.peerId, let spoofId = LarpConfig.shared.spoofTargetPeerId {
+        spoofPeerSignal = context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: spoofId))
+            |> map { $0.map { $0._asPeer() } }
+    } else {
+        spoofPeerSignal = .single(nil)
+    }
+    
     return combineLatest(
-        context.account.viewTracker.peerView(peerId, updateData: true),
+        combineLatest(
+            context.account.viewTracker.peerView(peerId, updateData: true),
+            spoofPeerSignal
+        ),
         accountsAndPeers,
         activeSessionsContextAndCount,
         privacySettings,
@@ -955,7 +967,8 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id, 
         starsState,
         tonState
     )
-    |> map { peerView, accountsAndPeers, accountSessions, privacySettings, sharedPreferences, notifications, stickerPacks, hasPassport, accountPreferences, suggestions, limits, hasPassword, isPowerSavingEnabled, hasStories, bots, personalChannel, starsState, tonState -> PeerInfoScreenData in
+    |> map { combined, accountsAndPeers, accountSessions, privacySettings, sharedPreferences, notifications, stickerPacks, hasPassport, accountPreferences, suggestions, limits, hasPassword, isPowerSavingEnabled, hasStories, bots, personalChannel, starsState, tonState -> PeerInfoScreenData in
+        let (peerView, spoofPeer) = combined
         let (notificationExceptions, notificationsAuthorizationStatus, notificationsWarningSuppressed) = notifications
         let (featuredStickerPacks, archivedStickerPacks) = stickerPacks
         
@@ -977,7 +990,15 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id, 
             suggestPasswordSetup = true
         }
         
-        let peer = peerView.peers[peerId]
+        var peer = peerView.peers[peerId]
+        // LARP: spoof — when viewing self, show spoof target's profile instead
+        if peerId == context.account.peerId, let spoofId = LarpConfig.shared.spoofTargetPeerId {
+            if let sp = peerView.peers[spoofId] {
+                peer = sp
+            } else if let sp = spoofPeer {
+                peer = sp
+            }
+        }
         let globalSettings = TelegramGlobalSettings(
             suggestPhoneNumberConfirmation: suggestions.contains(.validatePhoneNumber),
             suggestPasswordConfirmation: suggestions.contains(.validatePassword),
