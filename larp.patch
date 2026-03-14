@@ -1,0 +1,554 @@
+diff --git submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift
+index ac1a1861..c759c792 100644
+--- submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift
++++ submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoData.swift
+@@ -928,8 +928,20 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id,
+     
+     let profileGiftsContext = ProfileGiftsContext(account: context.account, peerId: peerId)
+     
++    // LARP: when spoofing, also load spoof target so it appears in peerView
++    let spoofPeerSignal: Signal<Peer?, NoError>
++    if peerId == context.account.peerId, let spoofId = LarpConfig.shared.spoofTargetPeerId {
++        spoofPeerSignal = context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: spoofId))
++            |> map { $0.map { $0._asPeer() } }
++    } else {
++        spoofPeerSignal = .single(nil)
++    }
++    
+     return combineLatest(
+-        context.account.viewTracker.peerView(peerId, updateData: true),
++        combineLatest(
++            context.account.viewTracker.peerView(peerId, updateData: true),
++            spoofPeerSignal
++        ),
+         accountsAndPeers,
+         activeSessionsContextAndCount,
+         privacySettings,
+@@ -955,7 +967,8 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id,
+         starsState,
+         tonState
+     )
+-    |> map { peerView, accountsAndPeers, accountSessions, privacySettings, sharedPreferences, notifications, stickerPacks, hasPassport, accountPreferences, suggestions, limits, hasPassword, isPowerSavingEnabled, hasStories, bots, personalChannel, starsState, tonState -> PeerInfoScreenData in
++    |> map { combined, accountsAndPeers, accountSessions, privacySettings, sharedPreferences, notifications, stickerPacks, hasPassport, accountPreferences, suggestions, limits, hasPassword, isPowerSavingEnabled, hasStories, bots, personalChannel, starsState, tonState -> PeerInfoScreenData in
++        let (peerView, spoofPeer) = combined
+         let (notificationExceptions, notificationsAuthorizationStatus, notificationsWarningSuppressed) = notifications
+         let (featuredStickerPacks, archivedStickerPacks) = stickerPacks
+         
+@@ -977,7 +990,15 @@ func peerInfoScreenSettingsData(context: AccountContext, peerId: EnginePeer.Id,
+             suggestPasswordSetup = true
+         }
+         
+-        let peer = peerView.peers[peerId]
++        var peer = peerView.peers[peerId]
++        // LARP: spoof ÔÇö when viewing self, show spoof target's profile instead
++        if peerId == context.account.peerId, let spoofId = LarpConfig.shared.spoofTargetPeerId {
++            if let sp = peerView.peers[spoofId] {
++                peer = sp
++            } else if let sp = spoofPeer {
++                peer = sp
++            }
++        }
+         let globalSettings = TelegramGlobalSettings(
+             suggestPhoneNumberConfirmation: suggestions.contains(.validatePhoneNumber),
+             suggestPasswordConfirmation: suggestions.contains(.validatePassword),
+diff --git submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+index b4a13b64..2afc8963 100644
+--- submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
++++ submodules/TelegramUI/Components/PeerInfo/PeerInfoScreen/Sources/PeerInfoProfileItems.swift
+@@ -17,6 +17,7 @@ import WebUI
+ import AvatarNode
+ import PeerNameColorItem
+ import BoostLevelIconComponent
++import TelegramUIPreferences
+ 
+ private let enabledPublicBioEntities: EnabledEntityTypes = [.allUrl, .mention, .hashtag]
+ private let enabledPrivateBioEntities: EnabledEntityTypes = [.internalUrl, .mention, .hashtag]
+@@ -122,7 +123,14 @@ func infoItems(data: PeerInfoScreenData?, context: AccountContext, presentationD
+             }))
+         }
+         
+-        if let phone = user.phone {
++        // LARP: custom phone (when viewing self, no spoof)
++        var displayPhone: String? = user.phone
++        if isMyProfile && !LarpConfig.shared.hasSpoofTarget && LarpConfig.shared.hasCustomPhone {
++            displayPhone = LarpConfig.shared.customPhone
++        } else if !isMyProfile, let ov = LarpConfig.shared.peerOverride(UInt64(bitPattern: user.id.toInt64())), !ov.customPhone.isEmpty {
++            displayPhone = ov.customPhone
++        }
++        if let phone = displayPhone {
+             let formattedPhone = formatPhoneNumber(context: context, number: phone)
+             let label: String
+             if formattedPhone.hasPrefix("+888 ") {
+@@ -138,11 +146,29 @@ func infoItems(data: PeerInfoScreenData?, context: AccountContext, presentationD
+                 interaction.requestLayout(animated)
+             }))
+         }
+-        if let mainUsername = user.addressName {
+-            var additionalUsernames: String?
+-            let usernames = user.usernames.filter { $0.isActive && $0.username != mainUsername }
+-            if !usernames.isEmpty {
+-                additionalUsernames = presentationData.strings.Profile_AdditionalUsernames(String(usernames.map { "@\($0.username)" }.joined(separator: ", "))).string
++        // LARP: custom username / aliases (when viewing self, no spoof)
++        var mainUsername: String? = user.addressName
++        var additionalUsernamesFromAliases: String?
++        if isMyProfile && !LarpConfig.shared.hasSpoofTarget {
++            if LarpConfig.shared.hasAliases, let first = LarpConfig.shared.aliases.first {
++                mainUsername = first.name.hasPrefix("@") ? String(first.name.dropFirst()) : first.name
++                let rest = LarpConfig.shared.aliases.dropFirst().map { "@\($0.name)" }.joined(separator: ", ")
++                if !rest.isEmpty {
++                    additionalUsernamesFromAliases = presentationData.strings.Profile_AdditionalUsernames(rest).string
++                }
++            } else if LarpConfig.shared.hasCustomUsername {
++                mainUsername = LarpConfig.shared.customUsername.hasPrefix("@") ? String(LarpConfig.shared.customUsername.dropFirst()) : LarpConfig.shared.customUsername
++            }
++        } else if !isMyProfile, let ov = LarpConfig.shared.peerOverride(UInt64(bitPattern: user.id.toInt64())), !ov.customUsername.isEmpty {
++            mainUsername = ov.customUsername.hasPrefix("@") ? String(ov.customUsername.dropFirst()) : ov.customUsername
++        }
++        if let mainUsername = mainUsername {
++            var additionalUsernames: String? = additionalUsernamesFromAliases
++            if additionalUsernames == nil {
++                let usernames = user.usernames.filter { $0.isActive && $0.username != mainUsername }
++                if !usernames.isEmpty {
++                    additionalUsernames = presentationData.strings.Profile_AdditionalUsernames(String(usernames.map { "@\($0.username)" }.joined(separator: ", "))).string
++                }
+             }
+             
+             items[currentPeerInfoSection]!.append(
+diff --git submodules/TelegramUI/Sources/LarpSettingsController.swift submodules/TelegramUI/Sources/LarpSettingsController.swift
+new file mode 100644
+index 00000000..05656721
+--- /dev/null
++++ submodules/TelegramUI/Sources/LarpSettingsController.swift
+@@ -0,0 +1,269 @@
++/*
++ LARP Settings ÔÇö GUI for profile overrides
++ Acc├¿s: 10 taps sur l'onglet Settings
++ */
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import Postbox
++import TelegramCore
++import TelegramPresentationData
++import ItemListUI
++import AccountContext
++import PhoneNumberFormat
++import OverlayStatusController
++import TelegramUIPreferences
++
++private enum LarpSection: Int32 {
++    case user
++    case spoof
++    case actions
++}
++
++private enum LarpEntry: ItemListNodeEntry {
++    case usernameHeader(PresentationTheme)
++    case username(PresentationTheme, String)
++    case phoneHeader(PresentationTheme)
++    case phone(PresentationTheme, String)
++    case aliasesHeader(PresentationTheme)
++    case aliases(PresentationTheme, String)
++    case spoofHeader(PresentationTheme)
++    case spoofInput(PresentationTheme, String)
++    case spoofStatus(PresentationTheme, String)
++    case spoofSet(PresentationTheme)
++    case spoofClear(PresentationTheme)
++    case save(PresentationTheme)
++    case reset(PresentationTheme)
++    
++    var section: ItemListSectionId {
++        switch self {
++        case .usernameHeader, .username, .phoneHeader, .phone, .aliasesHeader, .aliases:
++            return LarpSection.user.rawValue
++        case .spoofHeader, .spoofInput, .spoofStatus, .spoofSet, .spoofClear:
++            return LarpSection.spoof.rawValue
++        case .save, .reset:
++            return LarpSection.actions.rawValue
++        }
++    }
++    
++    var stableId: Int32 {
++        switch self {
++        case .usernameHeader: return 0
++        case .username: return 1
++        case .phoneHeader: return 2
++        case .phone: return 3
++        case .aliasesHeader: return 4
++        case .aliases: return 5
++        case .spoofHeader: return 6
++        case .spoofInput: return 7
++        case .spoofStatus: return 8
++        case .spoofSet: return 9
++        case .spoofClear: return 10
++        case .save: return 11
++        case .reset: return 12
++        }
++    }
++    
++    static func < (lhs: LarpEntry, rhs: LarpEntry) -> Bool { lhs.stableId < rhs.stableId }
++    
++    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
++        let args = arguments as! LarpSettingsControllerArguments
++        switch self {
++        case let .usernameHeader(theme):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: "Pseudo (username)", sectionId: self.section)
++        case let .username(theme, value):
++            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(string: "@", textColor: theme.list.itemPrimaryTextColor), text: value, placeholder: "username", type: .username, clearType: .always, tag: nil, sectionId: self.section, textUpdated: { args.updateUsername($0) }, action: {})
++        case let .phoneHeader(theme):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: "Num├®ro de t├®l├®phone", sectionId: self.section)
++        case let .phone(theme, value):
++            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(), text: value, placeholder: "+33 6 12 34 56 78", type: .phone, clearType: .always, tag: nil, sectionId: self.section, textUpdated: { args.updatePhone($0) }, action: {})
++        case let .aliasesHeader(theme):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: "Aliases (@alias:price)", sectionId: self.section)
++        case let .aliases(theme, value):
++            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(), text: value, placeholder: "@alias:440 @other:8783", type: .regular(capitalization: false, autocorrection: false), clearType: .always, tag: nil, sectionId: self.section, textUpdated: { args.updateAliases($0) }, action: {})
++        case let .spoofHeader(theme):
++            return ItemListSectionHeaderItem(presentationData: presentationData, text: "Spoof (se faire passer pour)", sectionId: self.section)
++        case let .spoofInput(theme, value):
++            return ItemListSingleLineInputItem(presentationData: presentationData, systemStyle: .glass, title: NSAttributedString(), text: value, placeholder: "@username", type: .username, clearType: .always, tag: nil, sectionId: self.section, textUpdated: { args.updateSpoofInput($0) }, action: {})
++        case let .spoofStatus(theme, value):
++            return ItemListTextItem(presentationData: presentationData, text: .plain(value), sectionId: self.section)
++        case .spoofSet(theme):
++            return ItemListActionItem(presentationData: presentationData, title: "D├®finir spoof target", kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { args.resolveAndSetSpoof() })
++        case .spoofClear(theme):
++            return ItemListActionItem(presentationData: presentationData, title: "Effacer spoof", kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { args.clearSpoof() })
++        case .save(theme):
++            return ItemListActionItem(presentationData: presentationData, title: "Enregistrer", kind: .generic, alignment: .natural, sectionId: self.section, style: .blocks, action: { args.save() })
++        case .reset(theme):
++            return ItemListActionItem(presentationData: presentationData, title: "R├®initialiser tout", kind: .destructive, alignment: .natural, sectionId: self.section, style: .blocks, action: { args.reset() })
++        }
++    }
++}
++
++private struct LarpSettingsControllerArguments {
++    let context: AccountContext
++    let updateUsername: (String) -> Void
++    let updatePhone: (String) -> Void
++    let updateAliases: (String) -> Void
++    let updateSpoofInput: (String) -> Void
++    let resolveAndSetSpoof: () -> Void
++    let clearSpoof: () -> Void
++    let save: () -> Void
++    let reset: () -> Void
++}
++
++private struct LarpSettingsState: Equatable {
++    var username: String = ""
++    var phone: String = ""
++    var aliases: String = ""
++    var spoofInput: String = ""
++    var spoofStatus: String = ""
++}
++
++private func larpEntries(state: LarpSettingsState, presentationData: PresentationData) -> [LarpEntry] {
++    let theme = presentationData.theme
++    var entries: [LarpEntry] = []
++    
++    entries.append(.usernameHeader(theme))
++    entries.append(.username(theme, state.username))
++    entries.append(.phoneHeader(theme))
++    entries.append(.phone(theme, state.phone))
++    entries.append(.aliasesHeader(theme))
++    entries.append(.aliases(theme, state.aliases))
++    entries.append(.spoofHeader(theme))
++    entries.append(.spoofInput(theme, state.spoofInput))
++    if !state.spoofStatus.isEmpty {
++        entries.append(.spoofStatus(theme, state.spoofStatus))
++    }
++    entries.append(.spoofSet(theme))
++    entries.append(.spoofClear(theme))
++    entries.append(.save(theme))
++    entries.append(.reset(theme))
++    
++    return entries
++}
++
++public func larpSettingsController(context: AccountContext) -> ViewController {
++    let initialState = LarpSettingsState(
++        username: LarpConfig.shared.customUsername,
++        phone: LarpConfig.shared.customPhone,
++        aliases: LarpConfig.shared.aliasesRaw,
++        spoofInput: "",
++        spoofStatus: LarpConfig.shared.hasSpoofTarget ? "Spoof actif" : ""
++    )
++    
++    let statePromise = ValuePromise(initialState, ignoreRepeated: true)
++    let stateValue = Atomic(value: initialState)
++    
++    var pushControllerImpl: ((ViewController) -> Void)?
++    var presentControllerImpl: ((ViewController, ViewControllerPresentationArguments?) -> Void)?
++    
++    let arguments = LarpSettingsControllerArguments(
++        context: context,
++        updateUsername: { value in
++            stateValue.with { state in
++                var s = state
++                s.username = value
++                stateValue.swap(s)
++                statePromise.set(s)
++            }
++        },
++        updatePhone: { value in
++            stateValue.with { state in
++                var s = state
++                s.phone = value
++                stateValue.swap(s)
++                statePromise.set(s)
++            }
++        },
++        updateAliases: { value in
++            stateValue.with { state in
++                var s = state
++                s.aliases = value
++                stateValue.swap(s)
++                statePromise.set(s)
++            }
++        },
++        updateSpoofInput: { value in
++            stateValue.with { state in
++                var s = state
++                s.spoofInput = value
++                stateValue.swap(s)
++                statePromise.set(s)
++            }
++        },
++        resolveAndSetSpoof: {
++            let input = stateValue.with { $0.spoofInput }.trimmingCharacters(in: .whitespaces)
++            var username = input
++            if username.hasPrefix("@") { username = String(username.dropFirst()) }
++            if username.isEmpty { return }
++            
++            let _ = (context.engine.peers.resolvePeerByName(name: username, referrer: nil)
++                |> deliverOnMainQueue).start(next: { result in
++                    switch result {
++                    case .progress:
++                        break
++                    case let .result(peer):
++                        if case let .user(user) = peer {
++                            LarpConfig.shared.spoofTargetPeerId = user.id
++                            stateValue.with { state in
++                                var s = state
++                                s.spoofStatus = "Spoof: \(user.firstName ?? "") \(user.lastName ?? "")"
++                                s.spoofInput = ""
++                                stateValue.swap(s)
++                                statePromise.set(s)
++                            }
++                        }
++                    }
++                })
++        },
++        clearSpoof: {
++            LarpConfig.shared.spoofTargetPeerId = nil
++            stateValue.with { state in
++                var s = state
++                s.spoofStatus = ""
++                stateValue.swap(s)
++                statePromise.set(s)
++            }
++        },
++        save: {
++            let s = stateValue.with { $0 }
++            LarpConfig.shared.customUsername = s.username
++            LarpConfig.shared.customPhone = s.phone
++            LarpConfig.shared.aliasesRaw = s.aliases
++            context.sharedContext.presentGlobalOverlayController(OverlayStatusController(theme: context.sharedContext.currentPresentationData.with { $0 }.theme, type: .success), nil)
++        },
++        reset: {
++            LarpConfig.shared.reset()
++            let s = LarpSettingsState(username: "", phone: "", aliases: "", spoofInput: stateValue.with { $0.spoofInput }, spoofStatus: "")
++            stateValue.swap(s)
++            statePromise.set(s)
++        }
++    )
++    
++    let signal = combineLatest(context.sharedContext.presentationData, statePromise.get())
++        |> map { presentationData, state -> (ItemListControllerState, (ItemListNodeState, Any)) in
++            let controllerState = ItemListControllerState(
++                presentationData: ItemListPresentationData(presentationData),
++                title: .text("LARP"),
++                leftNavigationButton: nil,
++                rightNavigationButton: nil,
++                backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back)
++            )
++            let listState = ItemListNodeState(
++                presentationData: ItemListPresentationData(presentationData),
++                entries: larpEntries(state: state, presentationData: presentationData),
++                style: .blocks
++            )
++            return (controllerState, (listState, arguments))
++        }
++    
++    let controller = ItemListController(context: context, state: signal)
++    pushControllerImpl = { [weak controller] c in
++        (controller?.navigationController as? NavigationController)?.pushViewController(c)
++    }
++    presentControllerImpl = { [weak controller] c, a in
++        controller?.present(c, in: .window(.root), with: a)
++    }
++    return controller
++}
+diff --git submodules/TelegramUI/Sources/TelegramRootController.swift submodules/TelegramUI/Sources/TelegramRootController.swift
+index 2199dbfe..3ca98194 100644
+--- submodules/TelegramUI/Sources/TelegramRootController.swift
++++ submodules/TelegramUI/Sources/TelegramRootController.swift
+@@ -231,7 +231,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+             guard let strongSelf = self else {
+                 return
+             }
+-            strongSelf.pushViewController(debugController(sharedContext: strongSelf.context.sharedContext, context: strongSelf.context))
++            strongSelf.pushViewController(larpSettingsController(context: strongSelf.context))
+         }
+         accountSettingsController.parentController = self
+         controllers.append(accountSettingsController)
+diff --git submodules/TelegramUIPreferences/Sources/LarpConfig.swift submodules/TelegramUIPreferences/Sources/LarpConfig.swift
+new file mode 100644
+index 00000000..bde07324
+--- /dev/null
++++ submodules/TelegramUIPreferences/Sources/LarpConfig.swift
+@@ -0,0 +1,144 @@
++/*
++ LARP ÔÇö Local profile overrides (client-side only)
++ Pseudo, aliases, phone, spoof
++ */
++import Foundation
++import Postbox
++import TelegramCore
++
++public final class LarpConfig {
++    public static let shared = LarpConfig()
++    
++    private let defaults = UserDefaults.standard
++    private let prefix = "larp_"
++    
++    private init() {}
++    
++    // MARK: - Custom username
++    public var customUsername: String {
++        get { defaults.string(forKey: prefix + "username") ?? "" }
++        set { defaults.set(newValue.trimmingCharacters(in: .whitespaces), forKey: prefix + "username") }
++    }
++    
++    public var hasCustomUsername: Bool { !customUsername.isEmpty }
++    
++    // MARK: - Custom phone
++    public var customPhone: String {
++        get { defaults.string(forKey: prefix + "phone") ?? "" }
++        set { defaults.set(newValue.trimmingCharacters(in: .whitespaces), forKey: prefix + "phone") }
++    }
++    
++    public var hasCustomPhone: Bool { !customPhone.isEmpty }
++    
++    // MARK: - Aliases (format: @alias:price @other:123)
++    public var aliasesRaw: String {
++        get { defaults.string(forKey: prefix + "aliases") ?? "" }
++        set { defaults.set(newValue, forKey: prefix + "aliases") }
++    }
++    
++    public var hasAliases: Bool { !aliasesRaw.trimmingCharacters(in: .whitespaces).isEmpty }
++    
++    public struct FragmentAlias {
++        public let name: String
++        public let price: Double
++    }
++    
++    public var aliases: [FragmentAlias] {
++        parseAliases(aliasesRaw)
++    }
++    
++    private func parseAliases(_ raw: String) -> [FragmentAlias] {
++        var result: [FragmentAlias] = []
++        let parts = raw.split(separator: " ").map { String($0) }
++        for part in parts {
++            var item = part
++            if item.hasPrefix("@") {
++                item = String(item.dropFirst())
++            }
++            if item.isEmpty { continue }
++            if let colonPos = item.firstIndex(of: ":") {
++                let name = String(item[..<colonPos])
++                let priceStr = String(item[item.index(after: colonPos)...])
++                let price = Double(priceStr) ?? 0
++                if !name.isEmpty {
++                    result.append(FragmentAlias(name: name, price: price))
++                }
++            } else {
++                result.append(FragmentAlias(name: item, price: 0))
++            }
++        }
++        return result
++    }
++    
++    // MARK: - Spoof target (show as another user)
++    public var spoofTargetPeerId: PeerId? {
++        get {
++            let raw = defaults.string(forKey: prefix + "spoofTarget") ?? ""
++            if let id = Int64(raw), id != 0 {
++                return PeerId(id)
++            }
++            return nil
++        }
++        set {
++            if let pid = newValue {
++                defaults.set(String(pid.toInt64()), forKey: prefix + "spoofTarget")
++            } else {
++                defaults.removeObject(forKey: prefix + "spoofTarget")
++            }
++        }
++    }
++    
++    public var hasSpoofTarget: Bool { spoofTargetPeerId != nil }
++    
++    // MARK: - Peer overrides (customize how others appear)
++    public struct OtherPeerOverride {
++        public var customName: String
++        public var customUsername: String
++        public var customPhone: String
++    }
++    
++    private func overrideKey(_ peerId: UInt64) -> String {
++        "\(prefix)override_\(peerId)"
++    }
++    
++    public func hasOverride(_ peerId: UInt64) -> Bool {
++        defaults.dictionary(forKey: overrideKey(peerId)) != nil
++    }
++    
++    public func peerOverride(_ peerId: UInt64) -> OtherPeerOverride? {
++        guard let dict = defaults.dictionary(forKey: overrideKey(peerId)) else { return nil }
++        return OtherPeerOverride(
++            customName: dict["name"] as? String ?? "",
++            customUsername: dict["username"] as? String ?? "",
++            customPhone: dict["phone"] as? String ?? ""
++        )
++    }
++    
++    public func setPeerOverride(_ peerId: UInt64, _ ov: OtherPeerOverride) {
++        defaults.set([
++            "name": ov.customName,
++            "username": ov.customUsername,
++            "phone": ov.customPhone
++        ], forKey: overrideKey(peerId))
++    }
++    
++    public func removePeerOverride(_ peerId: UInt64) {
++        defaults.removeObject(forKey: overrideKey(peerId))
++    }
++    
++    // MARK: - Active check
++    public var isActive: Bool {
++        hasCustomUsername || hasCustomPhone || hasAliases || hasSpoofTarget
++    }
++    
++    public func reset() {
++        customUsername = ""
++        customPhone = ""
++        aliasesRaw = ""
++        spoofTargetPeerId = nil
++        let keys = defaults.dictionaryRepresentation().keys
++        for key in keys where key.hasPrefix(prefix + "override_") {
++            defaults.removeObject(forKey: key)
++        }
++    }
++}
