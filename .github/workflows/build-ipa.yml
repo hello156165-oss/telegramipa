@@ -73,6 +73,7 @@ jobs:
             --cacheDir="$HOME/telegram-bazel-cache" \
             generateProject \
             --configurationPath=build-config.json \
+            --xcodeManagedCodesigning \
             --disableProvisioningProfiles
 
       - name: Build (simulateur)
@@ -83,6 +84,7 @@ jobs:
             --cacheDir="$HOME/telegram-bazel-cache" \
             build \
             --configurationPath=build-config.json \
+            --xcodeManagedCodesigning \
             --disableProvisioningProfiles \
             --buildNumber=100001 \
             --configuration=release_sim_arm64
