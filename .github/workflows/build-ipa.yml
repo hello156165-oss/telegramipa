@@ -44,6 +44,7 @@ jobs:
         env:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
           python3 -c "
           import json, os
@@ -51,7 +52,7 @@ jobs:
             'bundle_id': 'org.telegram.build',
             'api_id': os.environ.get('API_ID', '0'),
             'api_hash': os.environ.get('API_HASH', 'placeholder'),
-            'team_id': '',
+            'team_id': os.environ.get('TEAM_ID', 'C67CF9S4VU'),
             'app_center_id': '0',
             'is_internal_build': 'true',
             'is_appstore_build': 'false',
@@ -67,7 +68,7 @@ jobs:
 
       - name: Generate Xcode project
         working-directory: telegram-src
-        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" generateProject --configurationPath=build-config.json --xcodeManagedCodesigning --disableProvisioningProfiles
+        run: python3 build-system/Make/Make.py --overrideXcodeVersion --cacheDir="$HOME/telegram-bazel-cache" generateProject --configurationPath=build-config.json --xcodeManagedCodesigning --disableProvisioningProfiles --disableExtensions
 
       - name: Build (simulateur)
         working-directory: telegram-src
