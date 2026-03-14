@@ -9,19 +9,16 @@ jobs:
   build:
     runs-on: macos-14
     timeout-minutes: 90
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Clone Telegram-iOS
         run: |
-          git clone -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
           cd telegram-src
-          git checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
-          git submodule update --init --recursive -j8
+          git -c submodule.recurse=false checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
           cd ..
 
       - name: Fix patch line endings
@@ -38,7 +35,7 @@ jobs:
           xcodebuild -version
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
