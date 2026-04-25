@@ -64,6 +64,25 @@ jobs:
                   "\n"
                   "    args = parser.parse_args(argv)\n"
               )
+
+          # 1b) Ensure build() actually forwards --bazelArguments to Bazel invocations
+          if "bazel_command_line.set_profile_swift(arguments.profileSwift)" in s and "add_additional_args" not in s[s.find("def build("):s.find("def test(")]:
+              s = s.replace(
+                  "    bazel_command_line.set_profile_swift(arguments.profileSwift)\n",
+                  "    bazel_command_line.set_profile_swift(arguments.profileSwift)\n"
+                  "    if getattr(arguments, 'bazelArguments', None):\n"
+                  "        bazel_command_line.add_additional_args(shlex.split(str(arguments.bazelArguments)))\n"
+              )
+
+          # 1c) Make BazelCommandLine.invoke_build include additional args
+          if "def invoke_build(self):" in s and "combined_arguments += self.additional_args" not in s:
+              s = s.replace(
+                  "        combined_arguments += self.get_additional_build_arguments()\n",
+                  "        combined_arguments += self.get_additional_build_arguments()\n"
+                  "\n"
+                  "        if self.additional_args is not None:\n"
+                  "            combined_arguments += self.additional_args\n"
+              )
           
           # 2) If provisioning profiles are disabled, don't require aps-environment
           needle = (
