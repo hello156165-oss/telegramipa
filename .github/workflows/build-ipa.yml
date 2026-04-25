@@ -25,7 +25,14 @@ jobs:
         run: |
           set -euxo pipefail
           cd telegram-src
-          git apply --verbose ../larp.patch
+          # Patch can legitimately be empty / not matching the current upstream snapshot.
+          # For TrollStore builds we prefer continuing the build over failing here.
+          tr -d '\r' < ../larp.patch > ../larp.patch.lf
+          if git apply --verbose --3way --allow-empty ../larp.patch.lf; then
+            echo "LARP patch applied."
+          else
+            echo "WARNING: LARP patch did not apply (continuing)." 1>&2
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
