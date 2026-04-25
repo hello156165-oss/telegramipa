@@ -157,6 +157,28 @@ jobs:
           print(f"Patched {p}")
           PY
 
+      - name: Patch app icons for Xcode 15 (disable .icon bundles)
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          p = Path("telegram-src/Telegram/BUILD")
+          s = p.read_text(encoding="utf-8")
+          
+          # Stop using Icon Composer `.icon` bundles (require Xcode 26+).
+          s = s.replace('composer_icon_folders = ["Telegram"]', 'composer_icon_folders = []')
+          
+          # Use classic xcassets app icon catalog instead.
+          s = s.replace(
+              '    app_icons = [ ":{}_icon".format(name) for name in composer_icon_folders ],',
+              '    app_icons = [":DefaultAppIcon"],'
+          )
+          
+          p.write_text(s, encoding="utf-8")
+          print(f"Patched {p}")
+          PY
+
       - name: Apply LARP patch
         run: |
           set -euxo pipefail
