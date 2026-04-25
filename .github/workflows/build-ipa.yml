@@ -328,28 +328,36 @@ jobs:
           set -euxo pipefail
           cd telegram-src
           mkdir -p build/artifacts
-          found_ipa=0
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            if [ -f "$f" ]; then
-              cp "$f" build/artifacts/
-              found_ipa=1
-            fi
-          done
-          if [ "$found_ipa" -ne 1 ]; then
-            echo "ERROR: Telegram.ipa not found. Dumping likely output paths:" 1>&2
+
+          # Bazel reports the IPA under bazel-bin/ (symlink into bazel-out).
+          # Try that first, then fall back to a glob in case the path changes.
+          IPA=""
+          if [ -f "bazel-bin/Telegram/Telegram.ipa" ]; then
+            IPA="bazel-bin/Telegram/Telegram.ipa"
+          else
+            for f in bazel-out/*/bin/Telegram/Telegram.ipa; do
+              [ -f "$f" ] && IPA="$f" && break
+            done
+          fi
+
+          if [ -z "$IPA" ]; then
+            echo "ERROR: Telegram.ipa not found. Contents of bazel-bin/Telegram:" 1>&2
             ls -la bazel-bin/Telegram || true
-            ls -la bazel-out || true
-            ls -la bazel-out/* || true
-            ls -la bazel-out/applebin_ios-* || true
-            ls -la bazel-out/applebin_ios-*/bin/Telegram || true
             exit 1
           fi
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM; do
+
+          cp "$IPA" build/artifacts/Telegram.ipa
+          echo "Copied IPA from $IPA ($(du -sh build/artifacts/Telegram.ipa | cut -f1))"
+
+          # Collect dSYMs (bazel-bin is a symlink so globs resolve correctly)
+          for f in bazel-bin/Telegram/*.dSYM; do
+            [ -d "$f" ] || continue
             mkdir -p build/DSYMs
             cp -R "$f" build/DSYMs/
           done
           if [ -d build/DSYMs ]; then
             zip -r "./build/artifacts/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
+            echo "DSYMs zipped."
           fi
 
       - name: Upload artifact
