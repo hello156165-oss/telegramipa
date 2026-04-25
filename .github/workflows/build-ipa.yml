@@ -27,7 +27,13 @@ jobs:
           cd telegram-src
           # Patch can legitimately be empty / not matching the current upstream snapshot.
           # For TrollStore builds we prefer continuing the build over failing here.
-          tr -d '\r' < ../larp.patch > ../larp.patch.lf
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path("../larp.patch")
+          dst = Path("../larp.patch.lf")
+          data = src.read_bytes()
+          dst.write_bytes(data.replace(b"\r\n", b"\n"))
+          PY
           if git apply --verbose --3way --allow-empty ../larp.patch.lf; then
             echo "LARP patch applied."
           else
