@@ -81,7 +81,7 @@ jobs:
               )
           
           p.write_text(s, encoding="utf-8")
-          print(f\"Patched {p}\")
+          print(f"Patched {p}")
           PY
 
       - name: Apply LARP patch
