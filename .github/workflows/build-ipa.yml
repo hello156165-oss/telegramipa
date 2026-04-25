@@ -219,6 +219,7 @@ jobs:
             build \
             --configurationPath=build-config.json \
             --codesigningInformationPath=build-system/fake-codesigning \
+            --disableProvisioningProfiles \
             --buildNumber=100001 \
             --configuration=release_arm64
 
