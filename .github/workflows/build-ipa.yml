@@ -340,6 +340,13 @@ jobs:
             "https://codeload.github.com/bazel-contrib/rules_python/tar.gz/refs/tags/1.6.0"
           ls -la "$DISTDIR/$RULES_PY_FILE"
 
+          # index-import (rules_swift dependency)
+          INDEX_IMPORT_FILE="index-import.tar.gz"
+          download "$DISTDIR/$INDEX_IMPORT_FILE" \
+            "https://github.com/MobileNativeFoundation/index-import/releases/download/5.8.0.1/$INDEX_IMPORT_FILE" \
+            "https://codeload.github.com/MobileNativeFoundation/index-import/tar.gz/refs/tags/5.8.0.1"
+          ls -la "$DISTDIR/$INDEX_IMPORT_FILE"
+
       - name: Build (device arm64 - unsigned IPA for TrollStore)
         run: |
           set -euxo pipefail
