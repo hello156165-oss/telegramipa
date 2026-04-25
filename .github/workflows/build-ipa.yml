@@ -283,6 +283,10 @@ jobs:
               <key>com.apple.developer.team-identifier</key><string>${TEAM_ID}</string>
               <key>get-task-allow</key><true/>
               <key>aps-environment</key><string>development</string>
+              <key>com.apple.security.application-groups</key>
+              <array>
+                <string>group.${BUNDLE_ID}</string>
+              </array>
             </dict>
           </dict>
           </plist>
