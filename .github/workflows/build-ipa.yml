@@ -293,7 +293,28 @@ jobs:
           PLIST
           
           # Extract cert+key from the bundled SelfSigned.p12, then sign the plist into a .mobileprovision (CMS/DER).
-          openssl pkcs12 -in build-system/fake-codesigning/certs/SelfSigned.p12 -nodes -passin pass: -out /tmp/selfsigned.pem
+          openssl pkcs12 -in build-system/fake-codesigning/certs/SelfSigned.p12 -nodes -passin pass: -out /tmp/selfsigned.pem 2>/dev/null || \
+          openssl pkcs12 -in build-system/fake-codesigning/certs/SelfSigned.p12 -nodes -passin pass: -out /tmp/selfsigned.pem -legacy 2>/dev/null || true
+          
+          # Extract DER certificate and embed in the plist as DeveloperCertificates
+          openssl x509 -in /tmp/selfsigned.pem -outform DER -out /tmp/selfsigned.der
+          CERT_B64=$(base64 -i /tmp/selfsigned.der)
+          
+          # Rewrite plist with DeveloperCertificates
+          python3 - <<PYEOF
+          import re
+          with open('/tmp/profile.plist', 'r') as f:
+              content = f.read()
+          cert_xml = """
+              <key>DeveloperCertificates</key>
+              <array>
+                <data>${CERT_B64}</data>
+              </array>"""
+          content = content.replace('            <key>Entitlements</key>', cert_xml + '\n            <key>Entitlements</key>')
+          with open('/tmp/profile.plist', 'w') as f:
+              f.write(content)
+          PYEOF
+          
           openssl smime -sign -in /tmp/profile.plist -signer /tmp/selfsigned.pem -inkey /tmp/selfsigned.pem -outform der -nodetach -noattr \
             -out build-system/fake-codesigning/profiles/Telegram.mobileprovision
 
