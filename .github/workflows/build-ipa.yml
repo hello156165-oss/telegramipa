@@ -83,6 +83,7 @@ jobs:
             --cacheDir="$HOME/telegram-bazel-cache" \
             generateProject \
             --configurationPath=build-config.json \
+            --codesigningInformationPath=build-system/fake-codesigning \
             --disableProvisioningProfiles
 
       - name: Import fake codesigning certificates
