@@ -61,7 +61,7 @@ profile = {
     "Entitlements": {
         "application-identifier": f"{team_id}.{bundle_id}",
         "com.apple.developer.team-identifier": team_id,
-        "get-task-allow": True,
+        "get-task-allow": False,
         "aps-environment": "development",
         "com.apple.security.application-groups": [f"group.{bundle_id}"],
     },
