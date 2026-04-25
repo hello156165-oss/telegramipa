@@ -328,8 +328,6 @@ jobs:
           cd telegram-src
           mkdir -p build/artifacts
 
-          # Bazel reports the IPA under bazel-bin/ (symlink into bazel-out).
-          # Try that first, then fall back to a glob in case the path changes.
           IPA=""
           if [ -f "bazel-bin/Telegram/Telegram.ipa" ]; then
             IPA="bazel-bin/Telegram/Telegram.ipa"
@@ -340,15 +338,63 @@ jobs:
           fi
 
           if [ -z "$IPA" ]; then
-            echo "ERROR: Telegram.ipa not found. Contents of bazel-bin/Telegram:" 1>&2
+            echo "ERROR: Telegram.ipa not found." 1>&2
             ls -la bazel-bin/Telegram || true
             exit 1
           fi
 
-          cp "$IPA" build/artifacts/Telegram.ipa
-          echo "Copied IPA from $IPA ($(du -sh build/artifacts/Telegram.ipa | cut -f1))"
+          echo "Found IPA: $IPA ($(du -sh "$IPA" | cut -f1))"
 
-          # Collect dSYMs (bazel-bin is a symlink so globs resolve correctly)
+          # ── TrollStore re-sign ────────────────────────────────────────────────
+          # Strip entitlements that cause a permanent black screen on TrollStore:
+          #   • com.apple.security.application-groups  → shared container doesn't
+          #     exist on device → Telegram hangs trying to open it
+          #   • aps-environment                        → unnecessary for TrollStore
+          # Re-sign everything ad-hoc (-s -); TrollStore overwrites the signature
+          # anyway, but reads entitlements from the binary we embed here.
+
+          TEAM_ID=$(python3 -c "import json; print(json.load(open('build-config.json'))['team_id'])")
+          BUNDLE_ID=$(python3 -c "import json; print(json.load(open('build-config.json'))['bundle_id'])")
+
+          WORK=/tmp/ipa_work
+          rm -rf "$WORK" && mkdir -p "$WORK"
+          unzip -q "$IPA" -d "$WORK"
+          APP=$(find "$WORK/Payload" -maxdepth 1 -name "*.app" | head -1)
+
+          # Minimal entitlements for TrollStore
+          cat > /tmp/trollstore.entitlements << ENTEOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>application-identifier</key><string>${TEAM_ID}.${BUNDLE_ID}</string>
+            <key>com.apple.developer.team-identifier</key><string>${TEAM_ID}</string>
+            <key>get-task-allow</key><false/>
+            <key>keychain-access-groups</key><array><string>${TEAM_ID}.${BUNDLE_ID}</string></array>
+          </dict></plist>
+          ENTEOF
+
+          # Remove embedded provisioning profile (TrollStore doesn't need it)
+          rm -f "${APP}/embedded.mobileprovision"
+
+          # Re-sign frameworks and dylibs (ad-hoc, no entitlements needed)
+          find "${APP}" \( -name "*.framework" -o -name "*.dylib" \) | while read item; do
+            codesign -f -s - "$item" 2>/dev/null || true
+          done
+
+          # Re-sign main binary with minimal entitlements
+          codesign -f -s - --entitlements /tmp/trollstore.entitlements "${APP}/Telegram"
+          codesign -f -s - --entitlements /tmp/trollstore.entitlements "${APP}"
+
+          echo "Re-signed for TrollStore with minimal entitlements."
+
+          # Repack IPA
+          cd "$WORK"
+          zip -qr /tmp/Telegram-TrollStore.ipa Payload
+          cp /tmp/Telegram-TrollStore.ipa "$OLDPWD/build/artifacts/Telegram.ipa"
+          echo "Final IPA: $(du -sh "$OLDPWD/build/artifacts/Telegram.ipa" | cut -f1)"
+          cd "$OLDPWD"
+
+          # Collect dSYMs
           for f in bazel-bin/Telegram/*.dSYM; do
             [ -d "$f" ] || continue
             mkdir -p build/DSYMs
@@ -356,7 +402,6 @@ jobs:
           done
           if [ -d build/DSYMs ]; then
             zip -r "./build/artifacts/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
-            echo "DSYMs zipped."
           fi
 
       - name: Upload artifact
