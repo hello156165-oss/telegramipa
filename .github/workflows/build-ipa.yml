@@ -201,15 +201,7 @@ jobs:
 
       - name: Generate Xcode project
         run: |
-          set -euxo pipefail
-          cd telegram-src
-          python3 build-system/Make/Make.py \
-            --overrideXcodeVersion \
-            --cacheDir="$HOME/telegram-bazel-cache" \
-            generateProject \
-            --configurationPath=build-config.json \
-            --codesigningInformationPath=build-system/fake-codesigning \
-            --disableProvisioningProfiles
+          echo "Skipping generateProject (not needed for IPA build)."
 
       - name: Import fake codesigning certificates
         run: |
