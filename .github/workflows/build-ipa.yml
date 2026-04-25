@@ -16,10 +16,73 @@ jobs:
         with:
           submodules: false
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Clone Telegram-iOS
         run: |
           set -euxo pipefail
           git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+
+      - name: Patch Make.py for CI (TrollStore/unsigned)
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          p = Path("telegram-src/build-system/Make/Make.py")
+          s = p.read_text(encoding="utf-8")
+          
+          # 1) Allow --bazelArguments after subcommand (argparse normalization)
+          if "Normalize argv by" not in s and "args = parser.parse_args()" in s:
+              s = s.replace(
+                  "    args = parser.parse_args()\n",
+                  "    # argparse requires global options to appear before the subcommand.\n"
+                  "    # Some callers (e.g. CI YAML) append `--bazelArguments` after the subcommand,\n"
+                  "    # which would normally fail with \"unrecognized arguments\". Normalize argv by\n"
+                  "    # moving `--bazelArguments` (and its value) before the subcommand.\n"
+                  "    argv = list(sys.argv[1:])\n"
+                  "    if '--bazelArguments' in argv:\n"
+                  "        idx = argv.index('--bazelArguments')\n"
+                  "        if idx + 1 < len(argv):\n"
+                  "            value = argv[idx + 1]\n"
+                  "            del argv[idx:idx + 2]\n"
+                  "            argv.insert(0, value)\n"
+                  "            argv.insert(0, '--bazelArguments')\n"
+                  "    else:\n"
+                  "        for i, a in enumerate(argv):\n"
+                  "            if a.startswith('--bazelArguments='):\n"
+                  "                del argv[i]\n"
+                  "                argv.insert(0, a)\n"
+                  "                break\n"
+                  "\n"
+                  "    args = parser.parse_args(argv)\n"
+              )
+          
+          # 2) If provisioning profiles are disabled, don't require aps-environment
+          needle = (
+              "    if codesigning_data.aps_environment is None:\n"
+              "        print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
+              "        sys.exit(1)\n"
+          )
+          if needle in s:
+              s = s.replace(
+                  needle,
+                  "    if codesigning_data.aps_environment is None:\n"
+                  "        # When provisioning profiles are explicitly disabled (e.g. simulator-only or unsigned builds),\n"
+                  "        # we can proceed without APNs entitlements.\n"
+                  "        if getattr(arguments, 'disableProvisioningProfiles', False):\n"
+                  "            codesigning_data.aps_environment = \"\"\n"
+                  "        else:\n"
+                  "            print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
+                  "            sys.exit(1)\n"
+              )
+          
+          p.write_text(s, encoding="utf-8")
+          print(f\"Patched {p}\")
+          PY
 
       - name: Apply LARP patch
         run: |
@@ -39,11 +102,6 @@ jobs:
           else
             echo "WARNING: LARP patch did not apply (continuing)." 1>&2
           fi
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
       - name: Create config
         run: |
