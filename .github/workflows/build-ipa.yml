@@ -77,7 +77,10 @@ jobs:
                   "    if codesigning_data.aps_environment is None:\n"
                   "        # When provisioning profiles are explicitly disabled (e.g. simulator-only or unsigned builds),\n"
                   "        # we can proceed without APNs entitlements.\n"
-                  "        if getattr(arguments, 'disableProvisioningProfiles', False):\n"
+                  "        disable_profiles = getattr(arguments, 'disableProvisioningProfiles', False)\n"
+                  "        if getattr(arguments, 'bazelArguments', None):\n"
+                  "            disable_profiles = disable_profiles or ('--//Telegram:disableProvisioningProfiles' in str(arguments.bazelArguments))\n"
+                  "        if disable_profiles:\n"
                   "            codesigning_data.aps_environment = \"\"\n"
                   "        else:\n"
                   "            print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
@@ -98,7 +101,10 @@ jobs:
                   "            provisioning_profile_files.append(file_name)\n"
                   "\n"
                   "    # PLACEHOLDER_PROFILES_FOR_DISABLED_PROVISIONING\n"
-                  "    if getattr(arguments, 'disableProvisioningProfiles', False):\n"
+                  "    disable_profiles = getattr(arguments, 'disableProvisioningProfiles', False)\n"
+                  "    if getattr(arguments, 'bazelArguments', None):\n"
+                  "        disable_profiles = disable_profiles or ('--//Telegram:disableProvisioningProfiles' in str(arguments.bazelArguments))\n"
+                  "    if disable_profiles:\n"
                   "        required = [\n"
                   "            'Telegram.mobileprovision',\n"
                   "            'Share.mobileprovision',\n"
@@ -216,10 +222,10 @@ jobs:
           python3 build-system/Make/Make.py \
             --overrideXcodeVersion \
             --cacheDir="$HOME/telegram-bazel-cache" \
+            --bazelArguments="--//Telegram:disableProvisioningProfiles" \
             build \
             --configurationPath=build-config.json \
             --codesigningInformationPath=build-system/fake-codesigning \
-            --disableProvisioningProfiles \
             --buildNumber=100001 \
             --configuration=release_arm64
 
