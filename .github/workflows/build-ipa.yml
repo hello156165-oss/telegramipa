@@ -79,6 +79,38 @@ jobs:
                   "            print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
                   "            sys.exit(1)\n"
               )
+
+          # 3) When provisioning profiles are disabled, still export placeholder targets so Bazel rules
+          # that reference @build_configuration//provisioning:*.mobileprovision don't fail analysis.
+          if "provisioning_profile_files = []" in s and "PLACEHOLDER_PROFILES_FOR_DISABLED_PROVISIONING" not in s:
+              s = s.replace(
+                  "    provisioning_profile_files = []\n"
+                  "    for file_name in os.listdir(provisioning_path):\n"
+                  "        if file_name.endswith('.mobileprovision'):\n"
+                  "            provisioning_profile_files.append(file_name)\n",
+                  "    provisioning_profile_files = []\n"
+                  "    for file_name in os.listdir(provisioning_path):\n"
+                  "        if file_name.endswith('.mobileprovision'):\n"
+                  "            provisioning_profile_files.append(file_name)\n"
+                  "\n"
+                  "    # PLACEHOLDER_PROFILES_FOR_DISABLED_PROVISIONING\n"
+                  "    if getattr(arguments, 'disableProvisioningProfiles', False):\n"
+                  "        required = [\n"
+                  "            'Telegram.mobileprovision',\n"
+                  "            'Share.mobileprovision',\n"
+                  "            'NotificationContent.mobileprovision',\n"
+                  "            'Widget.mobileprovision',\n"
+                  "            'Intents.mobileprovision',\n"
+                  "            'BroadcastUpload.mobileprovision',\n"
+                  "            'NotificationService.mobileprovision',\n"
+                  "        ]\n"
+                  "        for name in required:\n"
+                  "            path = provisioning_path + '/' + name\n"
+                  "            if not os.path.exists(path):\n"
+                  "                with open(path, 'wb') as f:\n"
+                  "                    f.write(b'')\n"
+                  "                provisioning_profile_files.append(name)\n"
+              )
           
           p.write_text(s, encoding="utf-8")
           print(f"Patched {p}")
