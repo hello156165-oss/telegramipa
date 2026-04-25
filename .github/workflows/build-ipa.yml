@@ -2,7 +2,7 @@ name: Build Telegram IPA
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -11,12 +11,12 @@ jobs:
     timeout-minutes: 120
 
     steps:
+      # ── Setup ────────────────────────────────────────────────────────────────
+
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: false
 
-      - name: Set Xcode (new SDK)
+      - name: Set Xcode (latest stable)
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -26,220 +26,59 @@ jobs:
         with:
           python-version: '3.11'
 
+      # ── Source ───────────────────────────────────────────────────────────────
+
       - name: Clone Telegram-iOS
         run: |
           set -euxo pipefail
-          git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          git clone --recursive -j8 \
+            https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
 
-      - name: Patch Make.py for CI (TrollStore/unsigned)
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          
-          p = Path("telegram-src/build-system/Make/Make.py")
-          s = p.read_text(encoding="utf-8")
-          
-          # 1) Allow --bazelArguments after subcommand (argparse normalization)
-          if "Normalize argv by" not in s and "args = parser.parse_args()" in s:
-              s = s.replace(
-                  "    args = parser.parse_args()\n",
-                  "    # argparse requires global options to appear before the subcommand.\n"
-                  "    # Some callers (e.g. CI YAML) append `--bazelArguments` after the subcommand,\n"
-                  "    # which would normally fail with \"unrecognized arguments\". Normalize argv by\n"
-                  "    # moving `--bazelArguments` (and its value) before the subcommand.\n"
-                  "    argv = list(sys.argv[1:])\n"
-                  "    if '--bazelArguments' in argv:\n"
-                  "        idx = argv.index('--bazelArguments')\n"
-                  "        if idx + 1 < len(argv):\n"
-                  "            value = argv[idx + 1]\n"
-                  "            del argv[idx:idx + 2]\n"
-                  "            argv.insert(0, value)\n"
-                  "            argv.insert(0, '--bazelArguments')\n"
-                  "    else:\n"
-                  "        for i, a in enumerate(argv):\n"
-                  "            if a.startswith('--bazelArguments='):\n"
-                  "                del argv[i]\n"
-                  "                argv.insert(0, a)\n"
-                  "                break\n"
-                  "\n"
-                  "    args = parser.parse_args(argv)\n"
-              )
+      # ── Patches ──────────────────────────────────────────────────────────────
 
-          # 1b) Ensure build() actually forwards --bazelArguments to Bazel invocations
-          if "bazel_command_line.set_profile_swift(arguments.profileSwift)" in s and "add_additional_args" not in s[s.find("def build("):s.find("def test(")]:
-              s = s.replace(
-                  "    bazel_command_line.set_profile_swift(arguments.profileSwift)\n",
-                  "    bazel_command_line.set_profile_swift(arguments.profileSwift)\n"
-                  "    if getattr(arguments, 'bazelArguments', None):\n"
-                  "        bazel_command_line.add_additional_args(shlex.split(str(arguments.bazelArguments)))\n"
-              )
+      - name: Patch Make.py for CI
+        run: python3 .github/scripts/patch_make.py
 
-          # 1c) Make BazelCommandLine.invoke_build include additional args
-          if "def invoke_build(self):" in s and "combined_arguments += self.additional_args" not in s:
-              s = s.replace(
-                  "        combined_arguments += self.get_additional_build_arguments()\n",
-                  "        combined_arguments += self.get_additional_build_arguments()\n"
-                  "\n"
-                  "        if self.additional_args is not None:\n"
-                  "            combined_arguments += self.additional_args\n"
-              )
-          
-          # 2) If provisioning profiles are disabled, don't require aps-environment
-          needle = (
-              "    if codesigning_data.aps_environment is None:\n"
-              "        print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
-              "        sys.exit(1)\n"
-          )
-          if needle in s:
-              s = s.replace(
-                  needle,
-                  "    if codesigning_data.aps_environment is None:\n"
-                  "        # When provisioning profiles are explicitly disabled (e.g. simulator-only or unsigned builds),\n"
-                  "        # we can proceed without APNs entitlements.\n"
-                  "        disable_profiles = getattr(arguments, 'disableProvisioningProfiles', False)\n"
-                  "        if getattr(arguments, 'bazelArguments', None):\n"
-                  "            disable_profiles = disable_profiles or ('--//Telegram:disableProvisioningProfiles' in str(arguments.bazelArguments))\n"
-                  "        if disable_profiles:\n"
-                  "            codesigning_data.aps_environment = \"\"\n"
-                  "        else:\n"
-                  "            print('Could not find a valid aps-environment entitlement in the provided provisioning profiles')\n"
-                  "            sys.exit(1)\n"
-              )
-
-          # 3) When provisioning profiles are disabled, still export placeholder targets so Bazel rules
-          # that reference @build_configuration//provisioning:*.mobileprovision don't fail analysis.
-          if "provisioning_profile_files = []" in s and "PLACEHOLDER_PROFILES_FOR_DISABLED_PROVISIONING" not in s:
-              s = s.replace(
-                  "    provisioning_profile_files = []\n"
-                  "    for file_name in os.listdir(provisioning_path):\n"
-                  "        if file_name.endswith('.mobileprovision'):\n"
-                  "            provisioning_profile_files.append(file_name)\n",
-                  "    provisioning_profile_files = []\n"
-                  "    for file_name in os.listdir(provisioning_path):\n"
-                  "        if file_name.endswith('.mobileprovision'):\n"
-                  "            provisioning_profile_files.append(file_name)\n"
-                  "\n"
-                  "    # PLACEHOLDER_PROFILES_FOR_DISABLED_PROVISIONING\n"
-                  "    disable_profiles = getattr(arguments, 'disableProvisioningProfiles', False)\n"
-                  "    if getattr(arguments, 'bazelArguments', None):\n"
-                  "        disable_profiles = disable_profiles or ('--//Telegram:disableProvisioningProfiles' in str(arguments.bazelArguments))\n"
-                  "    if disable_profiles:\n"
-                  "        required = [\n"
-                  "            'Telegram.mobileprovision',\n"
-                  "            'Share.mobileprovision',\n"
-                  "            'NotificationContent.mobileprovision',\n"
-                  "            'Widget.mobileprovision',\n"
-                  "            'Intents.mobileprovision',\n"
-                  "            'BroadcastUpload.mobileprovision',\n"
-                  "            'NotificationService.mobileprovision',\n"
-                  "        ]\n"
-                  "        for name in required:\n"
-                  "            path = provisioning_path + '/' + name\n"
-                  "            if not os.path.exists(path):\n"
-                  "                with open(path, 'wb') as f:\n"
-                  "                    f.write(b'')\n"
-                  "                provisioning_profile_files.append(name)\n"
-              )
-          
-          p.write_text(s, encoding="utf-8")
-          print(f"Patched {p}")
-          PY
-
-      - name: Patch ProjectGeneration for disableProvisioningProfiles
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          
-          p = Path("telegram-src/build-system/Make/ProjectGeneration.py")
-          s = p.read_text(encoding="utf-8")
-          
-          marker = "        bazel_generate_arguments += ['--//{}:disableStripping'.format(app_target)]"
-          if marker in s and "disableProvisioningProfiles" not in s:
-              s = s.replace(
-                  marker,
-                  marker
-                  + "\n        if disable_provisioning_profiles:\n"
-                  + "            bazel_generate_arguments += ['--//{}:disableProvisioningProfiles'.format(app_target)]"
-              )
-          
-          marker2 = "        project_bazel_arguments += ['--//{}:disableStripping'.format(app_target)]"
-          if marker2 in s and "disableProvisioningProfiles'.format(app_target)]" not in s:
-              s = s.replace(
-                  marker2,
-                  marker2
-                  + "\n        if disable_provisioning_profiles:\n"
-                  + "            project_bazel_arguments += ['--//{}:disableProvisioningProfiles'.format(app_target)]"
-              )
-          
-          p.write_text(s, encoding="utf-8")
-          print(f"Patched {p}")
-          PY
-
-      - name: Patch app icons for Xcode 15 (disable .icon bundles)
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("telegram-src/Telegram/BUILD")
-          s = p.read_text(encoding="utf-8")
-          original = s
-
-          # Only needed for old commits — on Xcode 26+ the source already supports .icon bundles.
-          # Apply only if the old pattern is present, to avoid breaking newer source.
-          s = s.replace('composer_icon_folders = ["Telegram"]', 'composer_icon_folders = []')
-          s = s.replace(
-              '    app_icons = [ ":{}_icon".format(name) for name in composer_icon_folders ],',
-              '    app_icons = [":DefaultAppIcon"],'
-          )
-
-          if s != original:
-              p.write_text(s, encoding="utf-8")
-              print(f"Patched {p} (icon composer disabled)")
-          else:
-              print(f"No icon patch needed for {p} (latest source)")
-          PY
+      - name: Patch ProjectGeneration.py for CI
+        run: python3 .github/scripts/patch_project_generation.py
 
       - name: Apply LARP patch
         run: |
           set -euxo pipefail
           cd telegram-src
-          # Patch can legitimately be empty / not matching the current upstream snapshot.
-          # For TrollStore builds we prefer continuing the build over failing here.
-          python3 - <<'PY'
+          python3 -c "
           from pathlib import Path
-          src = Path("../larp.patch")
-          dst = Path("../larp.patch.lf")
-          data = src.read_bytes()
-          dst.write_bytes(data.replace(b"\r\n", b"\n"))
-          PY
-          if git apply --verbose --3way --allow-empty ../larp.patch.lf; then
+          src = Path('../larp.patch')
+          dst = Path('../larp.patch.lf')
+          dst.write_bytes(src.read_bytes().replace(b'\r\n', b'\n'))
+          "
+          if git apply --3way --allow-empty ../larp.patch.lf; then
             echo "LARP patch applied."
           else
-            echo "WARNING: LARP patch did not apply (continuing)." 1>&2
+            echo "WARNING: LARP patch did not apply cleanly (continuing)." >&2
           fi
 
-      - name: Create config
+      # ── Config ───────────────────────────────────────────────────────────────
+
+      - name: Create build config
         run: |
           set -euxo pipefail
           cd telegram-src
           BUNDLE_ID="${{ secrets.BUNDLE_ID }}"
-          if [ -z "$BUNDLE_ID" ]; then BUNDLE_ID="org.telegram.build"; fi
-          API_ID="${{ secrets.API_ID }}"
-          if [ -z "$API_ID" ]; then API_ID="0"; fi
-          API_HASH="${{ secrets.API_HASH }}"
-          if [ -z "$API_HASH" ]; then API_HASH="placeholder"; fi
+          [ -z "$BUNDLE_ID" ] && BUNDLE_ID="org.telegram.build"
           TEAM_ID="${{ secrets.TEAM_ID }}"
-          if [ -z "$TEAM_ID" ]; then TEAM_ID="C67CF9S4VU"; fi
-          
+          [ -z "$TEAM_ID" ] && TEAM_ID="C67CF9S4VU"
+          API_ID="${{ secrets.API_ID }}"
+          [ -z "$API_ID" ] && API_ID="0"
+          API_HASH="${{ secrets.API_HASH }}"
+          [ -z "$API_HASH" ] && API_HASH="placeholder"
+
           cat > build-config.json << CONFIG
           {
-            "bundle_id": "$BUNDLE_ID",
-            "api_id": "$API_ID",
-            "api_hash": "$API_HASH",
-            "team_id": "$TEAM_ID",
+            "bundle_id": "${BUNDLE_ID}",
+            "api_id": "${API_ID}",
+            "api_hash": "${API_HASH}",
+            "team_id": "${TEAM_ID}",
             "app_center_id": "0",
             "is_internal_build": "true",
             "is_appstore_build": "false",
@@ -251,64 +90,57 @@ jobs:
           }
           CONFIG
 
-      - name: Create fake provisioning profile (self-signed)
+      # ── Codesigning setup ────────────────────────────────────────────────────
+
+      - name: Create fake provisioning profile
         run: |
           set -euxo pipefail
           cd telegram-src
           mkdir -p build-system/fake-codesigning/profiles
           python3 ../.github/scripts/create_profile.py
 
-      - name: Generate Xcode project
-        run: |
-          echo "Skipping generateProject (not needed for IPA build)."
-
-      - name: Import fake codesigning certificates
+      - name: Import fake certificates into keychain
         run: |
           set -euxo pipefail
           cd telegram-src
-          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          python3 build-system/Make/ImportCertificates.py \
+            --path build-system/fake-codesigning/certs
 
-      - name: Pre-download CMake (avoid GitHub 502)
+      # ── Pre-download Bazel dependencies (avoid GitHub 502) ───────────────────
+
+      - name: Pre-download Bazel dependencies
         run: |
           set -euxo pipefail
           DISTDIR="$HOME/bazel-distdir"
           mkdir -p "$DISTDIR"
-          
-          download() {
-            local out="$1"
-            shift
-            if [ -f "$out" ]; then return 0; fi
+
+          dl() {
+            local out="$1"; shift
+            [ -f "$out" ] && return 0
             for url in "$@"; do
-              if curl -fL --retry 10 --retry-all-errors --retry-delay 3 -o "$out" "$url"; then
-                return 0
-              fi
+              curl -fL --retry 10 --retry-all-errors --retry-delay 3 -o "$out" "$url" && return 0
             done
-            echo "Failed to download $(basename "$out")" 1>&2
-            return 1
+            echo "WARN: failed to pre-download $(basename "$out")" >&2
+            return 0
           }
-          
-          # CMake
-          CMAKE_FILE="cmake-4.1.2-macos-universal.tar.gz"
-          download "$DISTDIR/$CMAKE_FILE" \
-            "https://cmake.org/files/v4.1/$CMAKE_FILE" \
-            "https://github.com/Kitware/CMake/releases/download/v4.1.2/$CMAKE_FILE"
-          ls -la "$DISTDIR/$CMAKE_FILE"
-          
-          # rules_python (Bazel dependency) – GitHub release sometimes 502s; use codeload as mirror.
-          RULES_PY_FILE="rules_python-1.6.0.tar.gz"
-          download "$DISTDIR/$RULES_PY_FILE" \
-            "https://github.com/bazel-contrib/rules_python/releases/download/1.6.0/$RULES_PY_FILE" \
+
+          dl "$DISTDIR/cmake-4.1.2-macos-universal.tar.gz" \
+            "https://cmake.org/files/v4.1/cmake-4.1.2-macos-universal.tar.gz" \
+            "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz"
+
+          dl "$DISTDIR/rules_python-1.6.0.tar.gz" \
+            "https://github.com/bazel-contrib/rules_python/releases/download/1.6.0/rules_python-1.6.0.tar.gz" \
             "https://codeload.github.com/bazel-contrib/rules_python/tar.gz/refs/tags/1.6.0"
-          ls -la "$DISTDIR/$RULES_PY_FILE"
 
-          # index-import (rules_swift dependency)
-          INDEX_IMPORT_FILE="index-import.tar.gz"
-          download "$DISTDIR/$INDEX_IMPORT_FILE" \
-            "https://github.com/MobileNativeFoundation/index-import/releases/download/5.8.0.1/$INDEX_IMPORT_FILE" \
+          dl "$DISTDIR/index-import.tar.gz" \
+            "https://github.com/MobileNativeFoundation/index-import/releases/download/5.8.0.1/index-import.tar.gz" \
             "https://codeload.github.com/MobileNativeFoundation/index-import/tar.gz/refs/tags/5.8.0.1"
-          ls -la "$DISTDIR/$INDEX_IMPORT_FILE"
 
-      - name: Build (device arm64 - unsigned IPA for TrollStore)
+          ls -lah "$DISTDIR"
+
+      # ── Build ────────────────────────────────────────────────────────────────
+
+      - name: Build Telegram (release arm64)
         run: |
           set -euxo pipefail
           cd telegram-src
@@ -322,92 +154,54 @@ jobs:
             --buildNumber=100001 \
             --configuration=release_arm64
 
-      - name: Collect artifacts
+      # ── Post-build: re-sign for TrollStore ───────────────────────────────────
+
+      - name: Re-sign IPA for TrollStore (strip app groups)
         run: |
           set -euxo pipefail
           cd telegram-src
-          mkdir -p build/artifacts
 
           IPA=""
-          if [ -f "bazel-bin/Telegram/Telegram.ipa" ]; then
-            IPA="bazel-bin/Telegram/Telegram.ipa"
-          else
+          [ -f "bazel-bin/Telegram/Telegram.ipa" ] && IPA="bazel-bin/Telegram/Telegram.ipa"
+          if [ -z "$IPA" ]; then
             for f in bazel-out/*/bin/Telegram/Telegram.ipa; do
               [ -f "$f" ] && IPA="$f" && break
             done
           fi
-
-          if [ -z "$IPA" ]; then
-            echo "ERROR: Telegram.ipa not found." 1>&2
-            ls -la bazel-bin/Telegram || true
-            exit 1
-          fi
-
-          echo "Found IPA: $IPA ($(du -sh "$IPA" | cut -f1))"
-
-          # ── TrollStore re-sign ────────────────────────────────────────────────
-          # Strip entitlements that cause a permanent black screen on TrollStore:
-          #   • com.apple.security.application-groups  → shared container doesn't
-          #     exist on device → Telegram hangs trying to open it
-          #   • aps-environment                        → unnecessary for TrollStore
-          # Re-sign everything ad-hoc (-s -); TrollStore overwrites the signature
-          # anyway, but reads entitlements from the binary we embed here.
+          [ -z "$IPA" ] && { echo "ERROR: IPA not found" >&2; ls -la bazel-bin/Telegram || true; exit 1; }
 
           TEAM_ID=$(python3 -c "import json; print(json.load(open('build-config.json'))['team_id'])")
           BUNDLE_ID=$(python3 -c "import json; print(json.load(open('build-config.json'))['bundle_id'])")
 
-          WORK=/tmp/ipa_work
-          rm -rf "$WORK" && mkdir -p "$WORK"
-          unzip -q "$IPA" -d "$WORK"
-          APP=$(find "$WORK/Payload" -maxdepth 1 -name "*.app" | head -1)
+          mkdir -p build/artifacts
+          python3 ../.github/scripts/resign_trollstore.py \
+            "$IPA" \
+            build/artifacts/Telegram.ipa \
+            "$TEAM_ID" \
+            "$BUNDLE_ID"
 
-          # Minimal entitlements for TrollStore
-          cat > /tmp/trollstore.entitlements << ENTEOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>application-identifier</key><string>${TEAM_ID}.${BUNDLE_ID}</string>
-            <key>com.apple.developer.team-identifier</key><string>${TEAM_ID}</string>
-            <key>get-task-allow</key><false/>
-            <key>keychain-access-groups</key><array><string>${TEAM_ID}.${BUNDLE_ID}</string></array>
-          </dict></plist>
-          ENTEOF
+      # ── Collect dSYMs ────────────────────────────────────────────────────────
 
-          # Remove embedded provisioning profile (TrollStore doesn't need it)
-          rm -f "${APP}/embedded.mobileprovision"
-
-          # Re-sign frameworks and dylibs (ad-hoc, no entitlements needed)
-          find "${APP}" \( -name "*.framework" -o -name "*.dylib" \) | while read item; do
-            codesign -f -s - "$item" 2>/dev/null || true
-          done
-
-          # Re-sign main binary with minimal entitlements
-          codesign -f -s - --entitlements /tmp/trollstore.entitlements "${APP}/Telegram"
-          codesign -f -s - --entitlements /tmp/trollstore.entitlements "${APP}"
-
-          echo "Re-signed for TrollStore with minimal entitlements."
-
-          # Repack IPA
-          cd "$WORK"
-          zip -qr /tmp/Telegram-TrollStore.ipa Payload
-          cp /tmp/Telegram-TrollStore.ipa "$OLDPWD/build/artifacts/Telegram.ipa"
-          echo "Final IPA: $(du -sh "$OLDPWD/build/artifacts/Telegram.ipa" | cut -f1)"
-          cd "$OLDPWD"
-
-          # Collect dSYMs
+      - name: Collect dSYMs
+        run: |
+          set -euxo pipefail
+          cd telegram-src
           for f in bazel-bin/Telegram/*.dSYM; do
             [ -d "$f" ] || continue
             mkdir -p build/DSYMs
             cp -R "$f" build/DSYMs/
           done
           if [ -d build/DSYMs ]; then
-            zip -r "./build/artifacts/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
+            zip -r build/artifacts/Telegram.DSYMs.zip build/DSYMs >/dev/null
+            echo "DSYMs collected."
           fi
+
+      # ── Upload ───────────────────────────────────────────────────────────────
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Telegram-build
+          name: Telegram-TrollStore
           path: |
             telegram-src/build/artifacts/Telegram.ipa
             telegram-src/build/artifacts/Telegram.DSYMs.zip
