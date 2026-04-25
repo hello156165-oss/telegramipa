@@ -1218,7 +1218,26 @@ if __name__ == '__main__':
         parser.print_help()
         sys.exit(1)
 
-    args = parser.parse_args()
+    # argparse requires global options to appear before the subcommand.
+    # Some callers (e.g. CI YAML) append `--bazelArguments` after the subcommand,
+    # which would normally fail with "unrecognized arguments". Normalize argv by
+    # moving `--bazelArguments` (and its value) before the subcommand.
+    argv = list(sys.argv[1:])
+    if '--bazelArguments' in argv:
+        idx = argv.index('--bazelArguments')
+        if idx + 1 < len(argv):
+            value = argv[idx + 1]
+            del argv[idx:idx + 2]
+            argv.insert(0, value)
+            argv.insert(0, '--bazelArguments')
+    else:
+        for i, a in enumerate(argv):
+            if a.startswith('--bazelArguments='):
+                del argv[i]
+                argv.insert(0, a)
+                break
+
+    args = parser.parse_args(argv)
 
     if args.verbose:
         print(args)
