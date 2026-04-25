@@ -30,10 +30,6 @@ jobs:
         run: |
           set -euxo pipefail
           git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
-          cd telegram-src
-          # Pin to a known-good revision that builds on GitHub runners (Xcode 15.x).
-          git -c submodule.recurse=false checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
-          git submodule update --init --recursive -j8
 
       - name: Patch Make.py for CI (TrollStore/unsigned)
         run: |
@@ -186,21 +182,24 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          
+
           p = Path("telegram-src/Telegram/BUILD")
           s = p.read_text(encoding="utf-8")
-          
-          # Stop using Icon Composer `.icon` bundles (require Xcode 26+).
+          original = s
+
+          # Only needed for old commits — on Xcode 26+ the source already supports .icon bundles.
+          # Apply only if the old pattern is present, to avoid breaking newer source.
           s = s.replace('composer_icon_folders = ["Telegram"]', 'composer_icon_folders = []')
-          
-          # Use classic xcassets app icon catalog instead.
           s = s.replace(
               '    app_icons = [ ":{}_icon".format(name) for name in composer_icon_folders ],',
               '    app_icons = [":DefaultAppIcon"],'
           )
-          
-          p.write_text(s, encoding="utf-8")
-          print(f"Patched {p}")
+
+          if s != original:
+              p.write_text(s, encoding="utf-8")
+              print(f"Patched {p} (icon composer disabled)")
+          else:
+              print(f"No icon patch needed for {p} (latest source)")
           PY
 
       - name: Apply LARP patch
