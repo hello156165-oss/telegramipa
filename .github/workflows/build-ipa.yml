@@ -295,6 +295,21 @@ jobs:
           cd telegram-src
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
 
+      - name: Pre-download CMake (avoid GitHub 502)
+        run: |
+          set -euxo pipefail
+          DISTDIR="$HOME/bazel-distdir"
+          mkdir -p "$DISTDIR"
+          FILE="cmake-4.1.2-macos-universal.tar.gz"
+          if [ ! -f "$DISTDIR/$FILE" ]; then
+            # Prefer official mirror; fall back to GitHub release.
+            (curl -fL --retry 10 --retry-all-errors --retry-delay 3 \
+              -o "$DISTDIR/$FILE" "https://cmake.org/files/v4.1/$FILE") || \
+            (curl -fL --retry 10 --retry-all-errors --retry-delay 3 \
+              -o "$DISTDIR/$FILE" "https://github.com/Kitware/CMake/releases/download/v4.1.2/$FILE")
+          fi
+          ls -la "$DISTDIR/$FILE"
+
       - name: Build (device arm64 - unsigned IPA for TrollStore)
         run: |
           set -euxo pipefail
@@ -302,7 +317,7 @@ jobs:
           python3 build-system/Make/Make.py \
             --overrideXcodeVersion \
             --cacheDir="$HOME/telegram-bazel-cache" \
-            --bazelArguments="--//Telegram:disableExtensions" \
+            --bazelArguments="--distdir=$HOME/bazel-distdir --//Telegram:disableExtensions" \
             build \
             --configurationPath=build-config.json \
             --codesigningInformationPath=build-system/fake-codesigning \
