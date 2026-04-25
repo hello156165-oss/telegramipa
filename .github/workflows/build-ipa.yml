@@ -25,6 +25,10 @@ jobs:
         run: |
           set -euxo pipefail
           git clone --recursive -j8 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-src
+          cd telegram-src
+          # Pin to a known-good revision that builds on GitHub runners (Xcode 15.x).
+          git -c submodule.recurse=false checkout 7504a0f92694a3ccbb544e05f97304f8d0891ba9
+          git submodule update --init --recursive -j8
 
       - name: Patch Make.py for CI (TrollStore/unsigned)
         run: |
