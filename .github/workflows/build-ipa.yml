@@ -263,8 +263,11 @@ jobs:
           <dict>
             <key>AppIDName</key><string>Telegram Fake</string>
             <key>ApplicationIdentifierPrefix</key><array><string>${TEAM_ID}</string></array>
+            <key>TeamIdentifier</key><array><string>${TEAM_ID}</string></array>
+            <key>TeamName</key><string>Fake Team</string>
             <key>CreationDate</key><date>2026-01-01T00:00:00Z</date>
             <key>ExpirationDate</key><date>2036-01-01T00:00:00Z</date>
+            <key>TimeToLive</key><integer>3650</integer>
             <key>Name</key><string>Telegram Fake Profile</string>
             <key>Platform</key><array><string>iOS</string></array>
             <key>UUID</key><string>00000000-0000-0000-0000-000000000000</string>
