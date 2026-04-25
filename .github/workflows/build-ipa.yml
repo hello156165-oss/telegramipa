@@ -303,15 +303,33 @@ jobs:
           set -euxo pipefail
           DISTDIR="$HOME/bazel-distdir"
           mkdir -p "$DISTDIR"
-          FILE="cmake-4.1.2-macos-universal.tar.gz"
-          if [ ! -f "$DISTDIR/$FILE" ]; then
-            # Prefer official mirror; fall back to GitHub release.
-            (curl -fL --retry 10 --retry-all-errors --retry-delay 3 \
-              -o "$DISTDIR/$FILE" "https://cmake.org/files/v4.1/$FILE") || \
-            (curl -fL --retry 10 --retry-all-errors --retry-delay 3 \
-              -o "$DISTDIR/$FILE" "https://github.com/Kitware/CMake/releases/download/v4.1.2/$FILE")
-          fi
-          ls -la "$DISTDIR/$FILE"
+          
+          download() {
+            local out="$1"
+            shift
+            if [ -f "$out" ]; then return 0; fi
+            for url in "$@"; do
+              if curl -fL --retry 10 --retry-all-errors --retry-delay 3 -o "$out" "$url"; then
+                return 0
+              fi
+            done
+            echo "Failed to download $(basename "$out")" 1>&2
+            return 1
+          }
+          
+          # CMake
+          CMAKE_FILE="cmake-4.1.2-macos-universal.tar.gz"
+          download "$DISTDIR/$CMAKE_FILE" \
+            "https://cmake.org/files/v4.1/$CMAKE_FILE" \
+            "https://github.com/Kitware/CMake/releases/download/v4.1.2/$CMAKE_FILE"
+          ls -la "$DISTDIR/$CMAKE_FILE"
+          
+          # rules_python (Bazel dependency) – GitHub release sometimes 502s; use codeload as mirror.
+          RULES_PY_FILE="rules_python-1.6.0.tar.gz"
+          download "$DISTDIR/$RULES_PY_FILE" \
+            "https://github.com/bazel-contrib/rules_python/releases/download/1.6.0/$RULES_PY_FILE" \
+            "https://codeload.github.com/bazel-contrib/rules_python/tar.gz/refs/tags/1.6.0"
+          ls -la "$DISTDIR/$RULES_PY_FILE"
 
       - name: Build (device arm64 - unsigned IPA for TrollStore)
         run: |
